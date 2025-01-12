@@ -106,10 +106,22 @@ namespace EarTrumpet.UI.Controls
         public static ImageSource LoadShellIcon(string path, bool isDesktopApp, int cx, int cy)
         {
             path = CanonicalizePath(path);
-            var item = isDesktopApp ? Shell32.SHCreateItemFromParsingName(path, IntPtr.Zero, typeof(IShellItem2).GUID) :
-                Shell32.SHCreateItemInKnownFolder(FolderIds.AppsFolder, Shell32.KF_FLAG_DONT_VERIFY, path, typeof(IShellItem2).GUID);
 
-            ((IShellItemImageFactory)item).GetImage(new SIZE { cx = cx, cy = cy }, SIIGBF.SIIGBF_RESIZETOFIT | SIIGBF.SIIGBF_ICONONLY, out var bmp);
+            IShellItem2 shellItem;
+            try
+            {
+                shellItem = Shell32.SHCreateItemInKnownFolder(FolderIds.AppsFolder, Shell32.KF_FLAG_DONT_VERIFY, path, typeof(IShellItem2).GUID);
+            }
+            catch(Exception)
+            {
+                if (!isDesktopApp)
+                {
+                    Trace.WriteLine($"ImageEx LoadShellIcon SHCreateItemInKnownFolder failed for non-desktop app ({path}).");
+                }
+                shellItem = Shell32.SHCreateItemFromParsingName(path, IntPtr.Zero, typeof(IShellItem2).GUID);
+            }
+
+            ((IShellItemImageFactory)shellItem).GetImage(new SIZE { cx = cx, cy = cy }, SIIGBF.SIIGBF_RESIZETOFIT, out var bmp);
             try
             {
                 var ret = Imaging.CreateBitmapSourceFromHBitmap(bmp, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
@@ -128,6 +140,18 @@ namespace EarTrumpet.UI.Controls
             {
                 path = Path.Combine(_windowsPath, "sysnative", path.Substring(_systemPath.Length + 1));
             }
+
+            //
+            // Microsoft includes garbage CortanaUI app assets (\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\Cortana.UI\Assets\App)
+            // so replace the appid with one that has better (than nothing) assets.
+            //
+            // Ref: https://github.com/File-New-Project/EarTrumpet/issues/1259
+            //
+            if (path.Equals("MicrosoftWindows.Client.CBS_cw5n1h2txyewy!CortanaUI", StringComparison.InvariantCultureIgnoreCase))
+            {
+                path = "MicrosoftWindows.Client.CBS_cw5n1h2txyewy!PackageMetadata";
+            }
+
             return path;
         }
 
