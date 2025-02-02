@@ -65,14 +65,14 @@ namespace EarTrumpet.UI.Views
 
                 case FlyoutViewState.Closing_Stage1:
                     DevicesList.FindVisualChild<DeviceView>()?.FocusAndRemoveFocusVisual();
-
+                
                     if (_viewModel.IsExpandingOrCollapsing)
                     {
                         WindowAnimationLibrary.BeginFlyoutExitanimation(this, () =>
                         {
                             this.Cloak();
                             AccentPolicyLibrary.DisableAcrylic(this);
-
+                
                             // Go directly to ViewState.Hidden to avoid the stage 2 hide delay (debounce for tray clicks),
                             // we want to show again immediately.
                             _viewModel.ChangeState(FlyoutViewState.Hidden);
@@ -83,7 +83,7 @@ namespace EarTrumpet.UI.Views
                         // No animation for normal exit.
                         this.Cloak();
                         AccentPolicyLibrary.DisableAcrylic(this);
-
+                
                         // Prevent de-queueing partially on show and showing stale adnorners.
                         this.WaitForKeyboardVisuals(() =>
                         {
@@ -119,56 +119,88 @@ namespace EarTrumpet.UI.Views
             UpdateLayout();
             LayoutRoot.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
 
-            // WorkArea accounts for normal taskbar and docked windows.
-            var maxHeight = taskbar.ContainingScreen.WorkingArea.Height;
-            if (taskbar.IsAutoHideEnabled && (taskbar.Location == WindowsTaskbar.Position.Top || taskbar.Location == WindowsTaskbar.Position.Bottom))
+            // Working area accounts for normal taskbar and docked windows.
+            var adjustedWorkingAreaRight = taskbar.ContainingScreen.WorkingArea.Right;
+            var adjustedWorkingAreaLeft = taskbar.ContainingScreen.WorkingArea.Left;
+            var adjustedWorkingAreaTop = taskbar.ContainingScreen.WorkingArea.Top;
+            var adjustedWorkingAreaBottom = taskbar.ContainingScreen.WorkingArea.Bottom;
+
+            // Taskbar won't carve space out for itself if it's configured to auto-hide, so manually
+            // adjust the working area to compensate. This is only done if the working area edge
+            // reaches into Taskbar space. This accounts for 0..n docked windows that may not
+            // push the working area out far enough.
+
+            if (taskbar.IsAutoHideEnabled)
             {
-                // AutoHide Taskbar won't carve space out for itself, so manually account for the Top or Bottom Taskbar height.
-                // Note: Ideally we would open our flyout and 'hold open' the taskbar, but it's not known how to command the Taskbar
-                // to stay open for the duration of our window being active.
-                maxHeight -= taskbar.Size.Bottom - taskbar.Size.Top;
+                switch (taskbar.Location)
+                {
+                    case WindowsTaskbar.Position.Left:
+                        if (taskbar.ContainingScreen.WorkingArea.Left < taskbar.Size.Right)
+                        {
+                            adjustedWorkingAreaLeft = taskbar.Size.Right;
+                        }
+                        break;
+                    case WindowsTaskbar.Position.Right:
+                        if (taskbar.ContainingScreen.WorkingArea.Right > taskbar.Size.Left)
+                        {
+                            adjustedWorkingAreaRight = taskbar.Size.Left;
+                        }
+                        break;
+                    case WindowsTaskbar.Position.Top:
+                        if (taskbar.ContainingScreen.WorkingArea.Top < taskbar.Size.Bottom)
+                        {
+                            adjustedWorkingAreaTop = taskbar.Size.Bottom;
+                        }
+                        break;
+                    case WindowsTaskbar.Position.Bottom:
+                        if (taskbar.ContainingScreen.WorkingArea.Bottom > taskbar.Size.Top)
+                        {
+                            adjustedWorkingAreaBottom = taskbar.Size.Top;
+                        }
+                        break;
+                }
             }
 
-            double newWidth = Width * this.DpiX();
-            double newHeight = LayoutRoot.DesiredSize.Height * this.DpiY();
-            if (newHeight > maxHeight)
-            {
-                newHeight = maxHeight;
-            }
+            double flyoutWidth = Width * this.DpiX();
+            double flyoutHeight = (LayoutRoot.DesiredSize.Height) * this.DpiY();
 
-            double offsetFromTaskbar = 0;
+            double yOffset = 0;
+            double xOffset = 0;
             if(Environment.OSVersion.IsAtLeast(OSVersions.Windows11))
             {
-                offsetFromTaskbar += 12;
+                xOffset += 12 * this.DpiX();
+                yOffset += 12 * this.DpiY();
             }
 
+            var workingAreaHeight = Math.Abs(adjustedWorkingAreaTop - adjustedWorkingAreaBottom) - (yOffset * 2);
+            if (flyoutHeight > workingAreaHeight)
+            {
+                flyoutHeight = workingAreaHeight;
+            }
+
+            double top = 0;
+            double left = 0;
             switch (taskbar.Location)
             {
                 case WindowsTaskbar.Position.Left:
-                    this.SetWindowPos(taskbar.Size.Bottom - newHeight,
-                              taskbar.ContainingScreen.WorkingArea.Left,
-                              newHeight,
-                              newWidth);
+                    top = adjustedWorkingAreaBottom - flyoutHeight;
+                    left = adjustedWorkingAreaLeft;
                     break;
                 case WindowsTaskbar.Position.Right:
-                    this.SetWindowPos(taskbar.Size.Bottom - newHeight,
-                              taskbar.ContainingScreen.WorkingArea.Right - newWidth,
-                              newHeight,
-                              newWidth);
+                    top = adjustedWorkingAreaBottom - flyoutHeight;
+                    left = adjustedWorkingAreaRight - flyoutWidth;
                     break;
                 case WindowsTaskbar.Position.Top:
-                    this.SetWindowPos(taskbar.Size.Bottom,
-                              FlowDirection == FlowDirection.RightToLeft ? taskbar.ContainingScreen.WorkingArea.Left : taskbar.ContainingScreen.WorkingArea.Right - newWidth,
-                              newHeight,
-                              newWidth);
+                    top = adjustedWorkingAreaTop + xOffset;
+                    left = FlowDirection == FlowDirection.LeftToRight ? adjustedWorkingAreaRight - flyoutWidth - xOffset : adjustedWorkingAreaLeft + xOffset;
                     break;
                 case WindowsTaskbar.Position.Bottom:
-                    this.SetWindowPos(taskbar.Size.Top - newHeight - offsetFromTaskbar,
-                              FlowDirection == FlowDirection.RightToLeft ? taskbar.ContainingScreen.WorkingArea.Left : taskbar.ContainingScreen.WorkingArea.Right - newWidth,
-                              newHeight,
-                              newWidth);
+                    top = adjustedWorkingAreaBottom - flyoutHeight - yOffset;
+                    left = FlowDirection == FlowDirection.LeftToRight ? adjustedWorkingAreaRight - flyoutWidth - xOffset : adjustedWorkingAreaLeft + xOffset;
                     break;
             }
+            this.SetWindowPos(top, left, flyoutHeight, flyoutWidth);
+            _viewModel.UpdateWindowPos(top, left, flyoutHeight, flyoutWidth);
         }
 
         private void EnableAcrylicIfApplicable(WindowsTaskbar.State taskbar)
@@ -187,6 +219,11 @@ namespace EarTrumpet.UI.Views
 
         private User32.AccentFlags GetAccentFlags(WindowsTaskbar.State taskbar)
         {
+            if (Environment.OSVersion.IsAtLeast(OSVersions.Windows11))
+            {
+                return User32.AccentFlags.DrawAllBorders;
+            }
+
             switch (taskbar.Location)
             {
                 case WindowsTaskbar.Position.Left:
